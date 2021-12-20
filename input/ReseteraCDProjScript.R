@@ -72,7 +72,7 @@ cdproj_afinn %>% group_by(score) %>% count(word) %>% arrange(desc(n)) %>% top_n(
 cdproj_afinn %>% summarise(suma = sum(score))
 cdproj_afinn %>% count(score) %>% summarise(Sumatotal = sum(score * n))
 
-#¿Analisis temporal afinn?
+# ¿Analisis temporal afinn?
 
 cdproj_afinn %>% group_by(Fecha) %>%
   summarise(Puntuacion = sum(score)) %>%
@@ -88,4 +88,6 @@ cdproj_afinn %>% mutate(Tiempo = floor_date(Fecha, unit = "hour")) %>%
   ggplot(aes(x = Tiempo, y = Puntuacion, fill = Es_positivo)) + 
   geom_bar(stat = "identity") +
   labs(title = "Sentimientos en ese HILO por HORA (Ahora si ;D)")
+
+
 

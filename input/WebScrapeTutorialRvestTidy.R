@@ -4,7 +4,7 @@ library(stringr)
 library(rebus)
 library(lubridate)
 
-##Importacion datos ====
+## Importacion datos ====
 url <- 'http://www.trustpilot.com/review/www.amazon.com'
 url_176 <- 'http://www.trustpilot.com/review/www.amazon.com?page=176'
 amazon_xml <- read_html(url)
@@ -27,6 +27,7 @@ get_last_page <- function(html){
     # Convert to number
     as.numeric()                                     
 }
+
 get_reviews <- function(html){
   html %>% 
     # The relevant tag
@@ -83,17 +84,18 @@ get_review_dates <- function(html){
   }
   return_reviews
 }
+
 get_star_rating <- function(html){
   
   stars <- html %>% html_nodes('.star-rating') %>% html_attrs() %>%
     map(str_match, pattern = capture(DIGIT)) %>% map(1) %>% unlist()
- 
+  
   #Las dos primeras puntuaciones no son parte de las puntuaciones de los
   #clientes, sino la puntuación general de la empresa y una opción para el
   #usuario de poner una puntuación.
   stars <- stars[c(-1, -2)]
   return(stars)
-   
+  
 }
 
 get_data_table <- function(html, company_name){
@@ -271,19 +273,19 @@ hipotesis_tabla %>%
 
 labor_rating <- hipotesis_tabla %>%
   filter(company == "Amazon") %>% 
-           filter(es_finde == 0) %>% 
+  filter(es_finde == 0) %>% 
   summarise(mean(rating)) %>% pull()
 
 finde_rating <- hipotesis_tabla %>%
   filter(company == "Amazon") %>% 
   filter(es_finde == 1) %>% 
   summarise(mean(rating)) %>% pull()  
-  
-  
+
+
 diff_ratings <- labor_rating - finde_rating
-  
-  
-#Ahora permutaciones con el paquete infer
+
+
+# Ahora permutaciones con el paquete infer
 
 hipotesis_tabla$es_finde <- as.factor(hipotesis_tabla$es_finde)
 
@@ -296,6 +298,8 @@ permutacion_test <- hipotesis_tabla %>%
 
 
 permutacion_test %>% summarise(p = mean(abs(stat) >= diff_ratings))
-  
-  
+
+
+
+
 

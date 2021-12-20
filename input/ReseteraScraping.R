@@ -1,3 +1,4 @@
+## Importación paquetes
 library(tidyverse)
 library(tidytext)
 library(rvest)
@@ -7,8 +8,11 @@ library(lubridate)
 library(xts)
 library(infer)
 
-##Extracción mensajes foro
-#Esocogemos una página con multicita, que es el mensaje número 13
+## Loading our own functions
+source(file.path("input", "ReseteraFunctions.R"))
+
+## Extracción mensajes foro ====
+# Escogemos una página con multicita, que es el mensaje número 13
 url_resetera <- "https://www.resetera.com/threads/no-mans-sky-next-ot-a-korvax-a-gek-and-a-vykeen-walk-into-a-base.57062/page-2"
 
 resetera_xml <- read_html(url_resetera)
@@ -25,7 +29,7 @@ end_quote <- "false" %R% SPACE %R% "\\}" %R% SPACE
 str_view(test_cita, start_quote)
 str_view(test_cita, end_quote)
 
-#Localizaciones de inicio y final de citas. Nos interesa la segunda y la primera columna, respectivamente.
+# Localizaciones de inicio y final de citas. Nos interesa la segunda y la primera columna, respectivamente.
 str_locate_all(test_cita, start_quote)[[1]]
 str_locate_all(test_cita, end_quote)[[1]]
 
@@ -42,31 +46,31 @@ test_cita %>% str_sub(citas_rango[[1]][1], citas_rango[[1]][2])
 
 test_cita %>% map2(citas_rango, function(.x, .y) str_sub(.x, .y[[1]]) )
 
-#Esto debería de extraer las citas textuales
+# Esto debería de extraer las citas textuales
 str_sub(test_cita,
         citas_rango[, 1],
         citas_rango[, 2])
 
-#Y esto, extraer todo el texto que no son las citas
+# Y esto, extraer todo el texto que no son las citas
 texto_sin_citas  <- str_sub(test_cita,
-        citas_rango_final[, 1],
-        citas_rango_final[, 2]) %>% str_trim()
+                            citas_rango_final[, 1],
+                            citas_rango_final[, 2]) %>% str_trim()
 
-#Probablemente nos interese que todos los mensajes de un post, que no son las
-#citas, estén en un único elemento del vector.
+# Probablemente nos interese que todos los mensajes de un post, que no son las
+# citas, estén en un único elemento del vector.
 texto_sin_citas <- texto_sin_citas %>% str_c(collapse = " ")
 
-#Ya hemos fabricado la función rm_citas() para extraer citas textuales de una lista de mensajes.
+# Ya hemos fabricado la función rm_citas() para extraer citas textuales de una lista de mensajes.
 
-#Nos interesaría extraer la información de todas las páginas del hilo
-#La última página siempre va a provenir 
+# Nos interesaría extraer la información de todas las páginas del hilo
+# La última página siempre va a provenir 
 pagina <- html_nodes(resetera_xml, ".pageNavLinkGroup") %>% html_text() %>% str_squish()
 pagina <- pagina[1]
 last_pagina <- pagina %>%
   str_extract(one_or_more(DGT) %R% SPC %R% ANY_CHAR %R% END) %>%
   str_extract(one_or_more(DGT))
 
-#Generamos un string con las urls de todas las páginas
+# Generamos un string con las urls de todas las páginas
 url_base <- "https://www.resetera.com/threads/no-mans-sky-next-ot-a-korvax-a-gek-and-a-vykeen-walk-into-a-base.57062/"
 paginas <- 2:last_pagina
 urls_reset <- c(url_base, str_c(url_base, "page-", paginas))
@@ -75,10 +79,10 @@ urls_reset <- c(url_base, str_c(url_base, "page-", paginas))
 reset_masivo <- read_html(urls_reset)
 
 
-#Vamos a probar la función para todas las páginas. Llevará un buen tiempo
+# Vamos a probar la función para todas las páginas. Llevará un buen tiempo
 resetera_tabla <- extract_posts(url_base)
 
-#Nos quedamos con tablas que tengan información temporal
+# Nos quedamos con tablas que tengan información temporal
 resetera_tabla_new <- resetera_tabla[10:140]
 
 reset_tibble <- bind_rows(resetera_tabla_new)
@@ -87,27 +91,27 @@ head(reset_tibble)
 
 
 ## Tokenización con tidytext====
-#Hagamos un tokenize de estos wapos
+# Hagamos un tokenize de estos wapos
 reset_tokens <- reset_tibble %>% unnest_tokens(word, Texto)
 
-#Ahora tendríamos que relacionar las palabras con alguno de los lexicones
+# Ahora tendríamos que relacionar las palabras con alguno de los lexicones
 reset_nrc <- reset_tokens %>% inner_join(get_sentiments("nrc"), .id = "word")
 reset_bing <- reset_tokens %>% inner_join(get_sentiments("bing"), .id = "word")
 reset_afinn <- reset_tokens %>% inner_join(get_sentiments("afinn"), .id = "word")
 
 reset_bing$sentiment <- as.factor(reset_bing$sentiment)
 
-#Nos podria interesar dividir Fecha en año, meses, hora y minutos
+# Nos podria interesar dividir Fecha en año, meses, hora y minutos
 
 reset_nrc <- reset_nrc %>% mutate(Hora = hour(Fecha),
-                                    Dia = day(Fecha)) %>% 
+                                  Dia = day(Fecha)) %>% 
   select(Fecha, Dia, Hora, sentiment, word)
 
 reset_afinn <- reset_afinn %>% mutate(Hora = hour(Fecha),
-                                               Dia = day(Fecha)) %>% 
+                                      Dia = day(Fecha)) %>% 
   select(Fecha, Dia, Hora, word, score)
 
-#Ahora exploraremos las palabras que más se repiten en el hilo estudiado (OT No Mans Sky)
+# Ahora exploraremos las palabras que más se repiten en el hilo estudiado (OT No Mans Sky)
 reset_nrc %>% count(word) %>% arrange(desc(n)) %>% top_n(10)
 reset_nrc %>% count(sentiment) %>% arrange(desc(n))
 
@@ -148,8 +152,8 @@ reset_bing %>% count(sentiment) %>%
   theme(plot.title = element_text(hjust = 0.5))
 
 
-#¿Que tal con el afinn?
-#Media según dia
+# ¿Que tal con el afinn?
+# Media según dia
 reset_afinn %>% group_by(Dia) %>% summarise(Puntuacion = mean(score)) %>%
   ggplot(aes(x = as.factor(Dia), y = Puntuacion)) + geom_bar(stat = "identity") +
   geom_hline(aes(yintercept = mean(reset_afinn$score), colour = "Media total"), lty = 2, lwd = 1.2, show.legend = TRUE) +
@@ -158,7 +162,7 @@ reset_afinn %>% group_by(Dia) %>% summarise(Puntuacion = mean(score)) %>%
        x = "Dia de Julio 2018") +
   theme(plot.title = element_text(hjust = 0.5))
 
-#Media según hora
+# Media según hora
 reset_afinn %>% group_by(Hora) %>% summarise(Puntuacion = mean(score)) %>%
   ggplot(aes(x = as.factor(Hora), y = Puntuacion)) + geom_bar(stat = "identity") +
   geom_hline(aes(yintercept = mean(reset_afinn$score), colour = "Media total"), lty = 2, lwd = 1.2, show.legend = TRUE) +
@@ -168,7 +172,7 @@ reset_afinn %>% group_by(Hora) %>% summarise(Puntuacion = mean(score)) %>%
   theme(plot.title = element_text(hjust = 0.5))
 
 
-#¿Las palabras más populares según puntuación
+# ¿Las palabras más populares según puntuación
 reset_afinn %>% group_by(score) %>% count(word) %>% top_n(5) %>%
   mutate(sentiment = ifelse(score < 0, "negative", "positive")) %>% 
   ggplot(aes(x = reorder(word, desc(n)), y = n, fill = sentiment)) + geom_bar(stat = "identity") +
@@ -179,4 +183,5 @@ reset_afinn %>% group_by(score) %>% count(word) %>% top_n(5) %>%
   theme(plot.title = element_text(hjust = 0.5),
         axis.text.x = element_text(angle = 45,
                                    vjust = unit(0.75, "mm")))
+
 
