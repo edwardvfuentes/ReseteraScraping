@@ -2,7 +2,7 @@
 
 rm_citas <- function(posts){
   
-  start_quote <- "\n+[\\w+ ]+said:"
+  start_quote <- "\\w+ said:"
   end_quote <- "Click to shrink...[\n]+"
   
   has_cita <- which(str_detect(posts, end_quote))
