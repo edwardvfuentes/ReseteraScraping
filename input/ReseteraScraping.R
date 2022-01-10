@@ -11,11 +11,21 @@ library(infer)
 ## Loading our own functions
 source(file.path("input", "ReseteraFunctions.R"))
 
-## Extracción mensajes foro ====
-# Escogemos una página con multicita, que es el mensaje número 13
-url_resetera <- "https://www.resetera.com/threads/no-mans-sky-next-ot-a-korvax-a-gek-and-a-vykeen-walk-into-a-base.57062/page-2"
+## Extracting forum messages ====
 
-resetera_xml <- read_html(url_resetera)
+# We initially test our functions using an Halo Infinite thread inside the
+# forum
+url_resetera <- "https://www.resetera.com/threads/halo-infinite-ot-comeback-evolved.514647/page-324"
+
+# We politely connect to the webpage
+resetera_session <- bow(url_resetera)
+
+# and then we scrape it
+resetera_xml <- scrape(resetera_session)
+
+# Class for thread titles and descriptions: block-body
+
+
 
 test_cita <- (html_nodes(resetera_xml, ".messageText.SelectQuoteContainer.ugc.baseHtml") %>% html_text() %>% str_trim())[13]
 test_cita_2 <- (html_nodes(resetera_xml, ".messageText.SelectQuoteContainer.ugc.baseHtml") %>% html_text() %>% str_trim())[1]
