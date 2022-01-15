@@ -1,4 +1,4 @@
-## Importación paquetes
+## Importing packages
 library(tidyverse)
 library(tidytext)
 library(rvest)

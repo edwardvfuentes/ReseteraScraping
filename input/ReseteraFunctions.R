@@ -1,6 +1,8 @@
-# Funciones resetera
+### Functions for scraping resetera
 
-rm_citas <- function(posts){
+
+# For removing quotes inside posts in order to avoid duplicated messages
+rm_quotes <- function(posts){
   
   start_quote <- "[\\w+ ]+ said:"
   end_quote <- "Click to shrink\\.\\.\\."
@@ -13,13 +15,19 @@ rm_citas <- function(posts){
   
 }
 
+
+# For detecting the last page in a thread, so we can establish an ending
+# for the extracting loops
 ultima_pag <- function(url) {
-  # La última página siempre va a provenir de algo
+  
   pag_xml <- read_html(url)
+  
   pagina <- html_nodes(pag_xml, ".pageNavLinkGroup") %>%
     html_text() %>%
     str_squish()
+  
   pagina <- pagina[1]
+  
   last_pagina <- pagina %>%
     str_extract(one_or_more(DGT) %R% SPC %R% ANY_CHAR %R% END) %>%
     str_extract(one_or_more(DGT))
@@ -27,44 +35,47 @@ ultima_pag <- function(url) {
   
 }
 
-extract_posts <- function(url_base){
+
+# For having a list of every pertinent URL found by a google search
+extract_google_url <- function(url) {
+  start_pattern <- "(?<=q=)htt[ps]"
+  end_pattern <- "(?=&amp)"
   
-  # Recopilamos todas las urls del hilo del foro seleccionado
-  last_pagina <- ultima_pag(url_base)
-  paginas <- 2:last_pagina
-  urls_reset <- str_c(url_base, "page-", paginas)
+  extracted_url <- str_extract(url, paste0(start_pattern, "(.+?)", end_pattern))
   
-  # Debemos extraer un tibble con información textual por cada página
-  
-  list_tablas <- vector("list", length(urls_reset))
-  
-  for(i in 2:length(urls_reset)){
-    
-    url_xml <- read_html(urls_reset[i])
-    
-    # Extracción mensajes
-    msg_content <- url_xml %>%
-      html_nodes(".messageText.SelectQuoteContainer.ugc.baseHtml") %>%
-      html_text() %>% str_squish() %>% rm_citas()
-    
-    # Extracción información temporal
-    # msg_time <- url_xml %>% html_nodes(".datePermalink") %>%
-    #   html_nodes(".DateTime") %>%
-    #   html_attrs() %>% map(2) %>% unlist() %>% mdy_hm()
-    
-    time_info <- url_xml %>%
-      html_nodes(".datePermalink") %>%
-      html_nodes(".DateTime") %>% html_attrs()
-    
-    msg_time <- str_c(time_info %>% map(4),
-                      time_info %>% map(5), sep = " ") %>% mdy_hm()
-    
-    # Devolver tibble que aglutine todo
-    list_tablas[[i]] <- tibble(Fecha = msg_time, Texto = msg_content)
-    
-  }
-  return(list_tablas)
+  return(extracted_url)
 }
 
 
+# For having a detailed data frame of every post inside a Resetera thread
+# and their date of writing
+extract_rst_text <- function(read_xml) {
+  if (!class(read_xml)[1] == "xml_document") {
+    stop("Error: Object is not from the xml_document class")
+  }
+  
+  # The text portion
+  rst_text <- read_xml %>%
+    html_elements(".bbWrapper") %>%
+    html_text2() %>%
+    ## Remove quotes
+    rm_quotes() %>%
+    ## Remove \n
+    str_replace_all("\n", " ")
+  
+  # The date portion
+  rst_dates <- read_xml %>%
+    html_elements("[data-lb-caption-desc]") %>%
+    html_attr("data-lb-caption-desc") %>%
+    str_extract("(?<=· ).+") %>%
+    mdy_hm()
+  
+  # All together in one data frame
+  rst_frame <- tibble(
+    Date = rst_dates,
+    Post = rst_text
+  )
+  
+  return(rst_frame)
+}
 
