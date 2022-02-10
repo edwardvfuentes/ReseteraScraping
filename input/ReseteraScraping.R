@@ -7,25 +7,85 @@ library(rebus)
 library(lubridate)
 library(xts)
 library(infer)
+library(polite)
 
 ## Loading our own functions
-source(file.path("input", "ReseteraFunctions.R"))
+source(file.path("input", "ReseteraFunctions.R"), encoding = "utf-8")
 
-## Extracting forum messages ====
+## Connecting to Google ====
 
-# We initially test our functions using an Halo Infinite thread inside the
-# forum
-url_resetera <- "https://www.resetera.com/threads/halo-infinite-ot-comeback-evolved.514647/page-324"
+# We intend to extract resetera urls through Google, at least for 10 different
+# search pages
 
-# We politely connect to the webpage
-resetera_session <- bow(url_resetera)
+## Base url
+ggle_rst_base <- "https://www.google.com/search?q=resetera+epic+games+store+site:www.resetera.com&"
 
-# and then we scrape it
-resetera_xml <- scrape(resetera_session)
+## Then, we create a list for 10 search pages adding a pattern to ggle_rst_base
+ggle_rst_urls <- paste0(ggle_rst_base, "start=", seq(0, 90, by = 10), "&")
+
+
+# Let's save google xmls in a list
+ggle_cookies_list <- map(ggle_rst_urls, read_html)
+
+
+# We first connect to google...
+google_scrape <- read_html('https://www.google.com')
+
+# ...and then we search the google threads
+google_session <- html_form(google_scrape)[[1]]
+
+google_search <- google_session %>% 
+  html_form_set(q = 'epic games store site:www.resetera.com') %>% 
+  html_form_submit()
+
+
+# We need to get past cookies
+
+ggle_xml_list <- ggle_cookies_list %>% 
+  map(html_form) %>% 
+  map(1) %>% 
+  map(html_form_submit) %>% 
+  map(read_html)
+
+
+# Retrieve text that include URLs, then extract those URLs
+# with a specific function
+
+rst_thread_urls <- ggle_xml_list %>%
+  map(function(x) 
+  {
+    html_elements(x, "a") %>%
+      as.character() %>%
+      # Extract only urls
+      extract_google_url() %>% 
+      # Filter out URLs that are not related to Resetera
+      str_subset("^((?!google.com).)*$")
+  }
+  ) %>% 
+  # We unlist this for clarity
+  unlist()
+
+# Some thread urls don't begin in the first page of that thread. Therefore, we
+# need to rewrite some of the urls
+rst_thread_urls <- rst_thread_urls %>%
+  str_replace_all("page-\\d+", "page-1")
+
+# Now we need to scrap from each URL
+rst_xml_list <- rst_thread_urls %>%
+  map(read_html)
+
+rst_tibble_list <- rst_xml_list %>% 
+  map(extract_rst_text)
+
+rst_example <- read_html(rst_thread_urls[[1]])
+
+rst_example %>% extract_rst_text() %>% print(width = 100)
+
+
+
+
 
 # Class for thread titles and descriptions: block-body
-
-
 
 test_cita <- (html_nodes(resetera_xml, ".messageText.SelectQuoteContainer.ugc.baseHtml") %>% html_text() %>% str_trim())[13]
 test_cita_2 <- (html_nodes(resetera_xml, ".messageText.SelectQuoteContainer.ugc.baseHtml") %>% html_text() %>% str_trim())[1]
