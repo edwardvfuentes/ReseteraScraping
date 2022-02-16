@@ -1,16 +1,32 @@
 ## Importing packages
 library(tidyverse)
 library(tidytext)
+library(wordcloud)
 library(rvest)
+library(polite)
 library(stringr)
 library(rebus)
 library(lubridate)
 library(xts)
 library(infer)
-library(polite)
+library(parallel)
+library(parallelly)
+library(pracma)
+
 
 ## Loading our own functions
 source(file.path("input", "ReseteraFunctions.R"), encoding = "utf-8")
+
+
+## Setting plot theme
+
+rst_palette <- c("#7847B5", "#8952CD", "#FEF9FE", "#9F75DB", "#8B70B4")
+
+theme_set(
+  theme(panel.background = element_rect(fill = rst_palette[3]),
+        panel.grid.major.x = element_line(colour = rst_palette[5]),
+        panel.grid.major.y = element_blank())
+)
 
 ## Connecting to Google ====
 
@@ -28,19 +44,7 @@ ggle_rst_urls <- paste0(ggle_rst_base, "start=", seq(0, 90, by = 10), "&")
 ggle_cookies_list <- map(ggle_rst_urls, read_html)
 
 
-# We first connect to google...
-google_scrape <- read_html('https://www.google.com')
-
-# ...and then we search the google threads
-google_session <- html_form(google_scrape)[[1]]
-
-google_search <- google_session %>% 
-  html_form_set(q = 'epic games store site:www.resetera.com') %>% 
-  html_form_submit()
-
-
 # We need to get past cookies
-
 ggle_xml_list <- ggle_cookies_list %>% 
   map(html_form) %>% 
   map(1) %>% 
@@ -68,101 +72,233 @@ rst_thread_urls <- ggle_xml_list %>%
 # Some thread urls don't begin in the first page of that thread. Therefore, we
 # need to rewrite some of the urls
 rst_thread_urls <- rst_thread_urls %>%
-  str_replace_all("page-\\d+", "page-1")
+  str_remove("page-\\d+")
 
-# Now we need to scrap from each URL
-rst_xml_list <- rst_thread_urls %>%
-  map(read_html)
+# First, in order to construct adequate loops for reach thread, we need to 
+# know the last page for every thread
 
-rst_tibble_list <- rst_xml_list %>% 
-  map(extract_rst_text)
+tic()
 
-rst_example <- read_html(rst_thread_urls[[1]])
+rst_thread_last <- rst_thread_urls %>% 
+  map(bow) %>% 
+  map(scrape) %>% 
+  map(ultima_pag) %>% 
+  map(as.numeric)
 
-rst_example %>% extract_rst_text() %>% print(width = 100)
+toc()
 
+# If there's only one page, fill those spaces with a number one
+rst_thread_last[map_lgl(rst_thread_last, function(x) length(x) == 0)] <- 1
+    
 
-
-
-
-# Class for thread titles and descriptions: block-body
-
-test_cita <- (html_nodes(resetera_xml, ".messageText.SelectQuoteContainer.ugc.baseHtml") %>% html_text() %>% str_trim())[13]
-test_cita_2 <- (html_nodes(resetera_xml, ".messageText.SelectQuoteContainer.ugc.baseHtml") %>% html_text() %>% str_trim())[1]
-
-texto_posts_raw <- html_nodes(resetera_xml, ".messageText.SelectQuoteContainer.ugc.baseHtml") %>% html_text() %>% str_trim()
-
-
-start_quote <- one_or_more(WRD) %R% SPACE %R% "said:"
-end_quote <- "false" %R% SPACE %R% "\\}" %R% SPACE
-
-str_view(test_cita, start_quote)
-str_view(test_cita, end_quote)
-
-# Localizaciones de inicio y final de citas. Nos interesa la segunda y la primera columna, respectivamente.
-str_locate_all(test_cita, start_quote)[[1]]
-str_locate_all(test_cita, end_quote)[[1]]
-
-citas_rango <- cbind(str_locate_all(test_cita, start_quote)[[1]][, 1] - 1 ,
-                     str_locate_all(test_cita, end_quote)[[1]][, 1])
+# We'll create a list with every page for every thread
+rst_thread_urls_full <- rst_thread_urls %>%
+  map2(rst_thread_last, function(x, y) paste0(x, "page-", 1:y)) %>% 
+  unlist()
 
 
-citas_rango_final <- c(1,
-                       citas_rango %>% t() %>% as.numeric(),
-                       str_length(test_cita)) %>% matrix(byrow = T,
-                                                         ncol = 2)
+# Extracting text messages will be a computationally expensive task, so we are using
+# parallel processing for it.
 
-test_cita %>% str_sub(citas_rango[[1]][1], citas_rango[[1]][2])
+clusterino <- makeClusterPSOCK(3)
 
-test_cita %>% map2(citas_rango, function(.x, .y) str_sub(.x, .y[[1]]) )
+clusterExport(clusterino, c('extract_rst_text', 'rm_quotes', 'ultima_pag', 'extract_google_url'))
 
-# Esto debería de extraer las citas textuales
-str_sub(test_cita,
-        citas_rango[, 1],
-        citas_rango[, 2])
+clusterEvalQ(clusterino, library(tidyverse))
+clusterEvalQ(clusterino, library(tidytext))
+clusterEvalQ(clusterino, library(rvest))
+clusterEvalQ(clusterino, library(lubridate))
+clusterEvalQ(clusterino, library(polite))
 
-# Y esto, extraer todo el texto que no son las citas
-texto_sin_citas  <- str_sub(test_cita,
-                            citas_rango_final[, 1],
-                            citas_rango_final[, 2]) %>% str_trim()
+tic()
 
-# Probablemente nos interese que todos los mensajes de un post, que no son las
-# citas, estén en un único elemento del vector.
-texto_sin_citas <- texto_sin_citas %>% str_c(collapse = " ")
+rst_thread_extracts <- parLapplyLB(clusterino, rst_thread_urls_full, fun = function(x)
+  
+  {
+    extract_rst_text(scrape(bow(x))) 
+  }
 
-# Ya hemos fabricado la función rm_citas() para extraer citas textuales de una lista de mensajes.
+)
 
-# Nos interesaría extraer la información de todas las páginas del hilo
-# La última página siempre va a provenir 
-pagina <- html_nodes(resetera_xml, ".pageNavLinkGroup") %>% html_text() %>% str_squish()
-pagina <- pagina[1]
-last_pagina <- pagina %>%
-  str_extract(one_or_more(DGT) %R% SPC %R% ANY_CHAR %R% END) %>%
-  str_extract(one_or_more(DGT))
+elapsed_cluster_time <- toc()
 
-# Generamos un string con las urls de todas las páginas
-url_base <- "https://www.resetera.com/threads/no-mans-sky-next-ot-a-korvax-a-gek-and-a-vykeen-walk-into-a-base.57062/"
-paginas <- 2:last_pagina
-urls_reset <- c(url_base, str_c(url_base, "page-", paginas))
+stopCluster(clusterino)
+
+# Merge all the elements from the list into one dataframe
+rst_thread_df_raw <- bind_rows(rst_thread_extracts)
+
+# First exploration ====
+
+## We got info on thread posts, the date of posting (from year 'till minute), the page
+## and the title of the thread.
+head(rst_thread_df_raw)
+
+## A total of 32554 posts have been recorded. Dates range between 2018 until 2022.
+## The store's launch date was on December 6th in 2018.
+summary(rst_thread_df_raw)
+
+## Having another column that only register just years and months could be interesting
+rst_thread_df <- rst_thread_df_raw %>% 
+  mutate(Year = year(Date),
+         Month = month(Date),
+         # Also, Page column should be of integer type
+         Page = as.integer(Page)
+        )
+
+## In the Post column, some posts are completely empty (this is probably due to
+## advertising). We should filter them out
+rst_thread_df <- rst_thread_df %>% filter(!str_detect(Post, "^$"))
+
+## Because of the searching method that we've used, thread duplicates
+## could've been generated
+
+## A total of 703 rows are supposedly duplicated
+duplicated.data.frame(rst_thread_df)
+
+## Frequencies of threads and pages, in descending order
+rst_thread_df %>%
+  count(Thread_title, Page, Date, Post) %>%
+  arrange(desc(n)) %>% 
+  # Just show posts that have been repeated at least twice
+  filter(n > 1) %>% 
+  # Which threads are duplicated?
+  distinct(Thread_title)
+
+## We remove duplicated with selecting the first element of a combination of
+## four different factors
+
+rst_thread_df <- rst_thread_df %>%
+      group_by(Thread_title, Page, Date, Post) %>%
+  slice(1) %>% 
+  ungroup()
+
+## There's no duplicates anymore!
+duplicated.data.frame(rst_thread_df)
 
 
-reset_masivo <- read_html(urls_reset)
+## Also, some posts have strange words, that are related to the posting of
+## images. These phrases start with "{ \"lightbox_close\" and end with 
+## \"Toggle sidebar\" }
+
+## Create pattern to remove those strange words
+lightbox_pattern <- '\\{ \"lightbox_close\".+\"Toggle sidebar\" \\}'
+click_pattern <- 'Click to expand... Click to shrink...'
+
+rst_thread_df <- rst_thread_df %>%
+  mutate(Post = Post %>%
+           str_remove(lightbox_pattern) %>%
+           str_remove_all(click_pattern) %>% 
+           # Trim whitespaces from both sides and inside
+           str_squish) %>% 
+  ## This leads to new empty posts, so we remove them again
+  filter(!str_detect(Post, "^$"))  
+
+# Some threads present NA pages: This is because they only have one page.
+## Substitute NA's with the number 1
+rst_thread_df[is.na(rst_thread_df$Page),]$Page <- 1
+
+## Tidytext tokenization ====
+
+# Let's tokenize for separate words
+rst_tkn_word_df <- rst_thread_df %>%
+  unnest_token(Word, Post, drop = FALSE)
+
+# rst_tkn_word_df <- rst_thread_df %>%
+# unnest_tokens(Word, Post,drop = FALSE)
 
 
-# Vamos a probar la función para todas las páginas. Llevará un buen tiempo
-resetera_tabla <- extract_posts(url_base)
 
-# Nos quedamos con tablas que tengan información temporal
-resetera_tabla_new <- resetera_tabla[10:140]
+## Because tokenizing counts articles, prepositions, etc... We've got to remove them
+## using a stopword lexicon
 
-reset_tibble <- bind_rows(resetera_tabla_new)
-
-head(reset_tibble)
+# Remove stopwords
+rst_tkn_word_df <- rst_tkn_word_df %>%
+  anti_join(get_stopwords(), by = c("Word" = "word"))
 
 
-## Tokenización con tidytext====
-# Hagamos un tokenize de estos wapos
-reset_tokens <- reset_tibble %>% unnest_tokens(word, Texto)
+
+post_ejemplo <- rst_tkn_word_df %>% filter(str_detect(Post, "don't like")) %>% slice(1) %>% select(Post)
+
+
+
+# Load the sentiments data frame
+# sentiments_df lacks important works like "don't like"
+sentiments_df <- get_sentiments("afinn") %>%
+  bind_rows(data.frame(word = "don't like", value = -2))
+
+
+# With the AFINN sentiment lexicon, we can classify words by its sentiments
+rst_tkn_word_afinn <- rst_tkn_word_df %>%
+  inner_join(sentiments_df, by = c("Word" = "word")) %>% 
+# A general classifier for positives and negatives could be useful
+  mutate(sentiment = ifelse(value > 0, "positive", "negative"))
+
+
+## EDA ====
+
+# Most common words overall
+rst_tkn_word_df %>% 
+  count(Word) %>% 
+  arrange(desc(n))
+
+# A wordcloud for most common words
+rst_tkn_word_df %>% 
+  count(Word) %>% 
+  with(wordcloud(Word, n, max.words = 100))
+
+# Most common positive words
+rst_tkn_word_afinn %>%
+  filter(value > 0) %>% 
+  count(Word) %>% 
+  arrange(desc(n))
+
+# Most common negative words
+rst_tkn_word_afinn %>%
+  filter(value < 0) %>% 
+  count(Word) %>% 
+  arrange(desc(n))
+
+# Wordcloud of positive and negative
+rst_tkn_word_afinn %>%
+  count(Word, sentiment, sort = TRUE) %>%
+  acast(Word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("#F8766D", "#00BFC4"),
+                   max.words = 100)
+
+# Frequency bars for positive and negative sentiments
+rst_tkn_word_afinn %>% 
+  count(sentiment, Word) %>% 
+  group_by(sentiment) %>% 
+  top_n(10) %>% 
+  ggplot(aes(x = fct_reorder(Word, n), y = n)) +
+  geom_bar(stat = "identity", fill = rst_palette[4]) +
+  facet_wrap(~ sentiment, scale = "free_y") +
+  coord_flip()
+
+# What's the mean sentiment of the entire dataset?
+rst_tkn_word_afinn %>% 
+  summarise(Mean_sentiment = mean(value))
+
+# Mean sentiment by groups of month and year
+rst_tkn_word_afinn %>% 
+  group_by(Year, Month) %>% 
+  summarise(Mean_word_sentiment = mean(value)) %>% 
+  mutate(year_month = paste0(Year, "-", Month) %>% ym()) %>% 
+  ggplot(aes(x = year_month, y = Mean_word_sentiment)) +
+  geom_line() +
+  geom_hline(yintercept = 0, linetype = 2) +
+  scale_x_date(date_breaks = "6 months") +
+  labs(title = "Mean sentiment of words by month and year") +
+  theme(axis.text.x = element_text(angle = 0))
+
+# Mean word sentiment by thread
+
+## Top 10 most positive threads by words
+rst_tkn_word_afinn %>% 
+  group_by(Thread_title) %>% 
+  summarise(Mean_sentiment = mean(value)) %>% 
+  arrange(desc(Mean_sentiment))
+
 
 # Ahora tendríamos que relacionar las palabras con alguno de los lexicones
 reset_nrc <- reset_tokens %>% inner_join(get_sentiments("nrc"), .id = "word")
@@ -242,7 +378,7 @@ reset_afinn %>% group_by(Hora) %>% summarise(Puntuacion = mean(score)) %>%
   theme(plot.title = element_text(hjust = 0.5))
 
 
-# ¿Las palabras más populares según puntuación
+# ¿Las palabras más populares según puntuación? 
 reset_afinn %>% group_by(score) %>% count(word) %>% top_n(5) %>%
   mutate(sentiment = ifelse(score < 0, "negative", "positive")) %>% 
   ggplot(aes(x = reorder(word, desc(n)), y = n, fill = sentiment)) + geom_bar(stat = "identity") +
