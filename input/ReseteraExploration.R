@@ -1,3 +1,7 @@
+
+## Installing necessary packages
+install.packages(c("pracma", "polite", "tidytext", "wordcloud", "rebus"))
+
 ## Importing packages
 library(tidyverse)
 library(tidytext)
@@ -20,9 +24,7 @@ source(file.path("input", "ReseteraFunctions.R"), encoding = "utf-8")
 ## Importing the dataset
 rst_thread_df <- read_csv(file.path("data", "rst_thread_df.csv"))
 
-# An example
-
-## Setting plot theme
+## Setting the plot theme
 rst_palette <- c("#7847B5", "#8952CD", "#FEF9FE", "#9F75DB", "#8B70B4")
 
 theme_set(

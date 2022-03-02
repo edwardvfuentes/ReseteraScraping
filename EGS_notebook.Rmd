@@ -1,0 +1,77 @@
+---
+title: "Sentiment analysis of Epic Games Store through Resetera posts"
+author: "Edward Velo Fuentes"
+date: "2/27/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Background
+
+In this article we try to measure the public opinion towards the Epic Games Store using posts scrapped from the Resetera forums. We'll analyze a dataset that we obtained using web scrapping techniques from the rvest package at www.resetera.com, and then go through the common data science pipeline (importing, cleaning and exploring) in order to check if the general opinion towards the known digital game store has somewhat improved.
+
+# Introduction
+
+Epic Games is a well-known american video game company that was founded 31 years ago. While it achieved important milestones in the past such as the development of the Unreal Engine or some famous titles (_Unreal Tournament_, _Gears of War_, etc...), the company now recognized as the developers of Fortnite, arguably the most popular game in the world these years, having around [3 million online players](https://playercounter.com/fortnite/) at the time of the writing of this article. Riding on its success, Epic diversified its portfolio with the opening of a brand new digital game store on December 4th, 2018, called the _Epic Games Store_ (EGS, directly competing with other stores such as Steam, Origin or GOG. One of the features from the EGS that puts it apart from the competition is the fact that they gift one or more videogames each week. While it's indeed a very generous offer, a lot of gamers thought of this move as if they were "buying users", like an excuse for the lack of crucial services that in 2018 were deemed essential for any digital store in the industry, such as a shopping cart, cloud saving, more payment options, community options, better navigability... and many other features. Epic responded to this [showing a roadmap](https://trello.com/b/GXLc34hk/epic-games-store-roadmap) for currently in-development and future planned features. After four years of improvements and the expanding of their game catalogue, the question that we want to answer is: Has the public opinion on the EGS gone better or worse as of 2022?
+
+In order to answer the proposed question, we'll be using sentiment analysis with posts obtained through web scrapping from the Resetera forums, one of the most popular videogame forums on the internet. As a user myself, I know that the opinion about the EGS on the forum wasn't quite good around the launch period, to say the least, so I'm really interested if it's been shifted in this regard towards one way or the other.
+
+# Preparing the data
+
+As previously said, we'll be using a web scrapped dataset. The script for the scrapping is uploaded on my GitHub page, for anyone interested. Here we'll just import it as it is.
+
+```{r importing, message=FALSE, warning=FALSE}
+## Installing necessary packages
+install.packages(c("pracma", "polite", "tidytext", "wordcloud", "rebus"))
+
+## Importing packages
+library(tidyverse)
+library(tidytext)
+library(wordcloud)
+library(rvest)
+library(polite)
+library(stringr)
+library(rebus)
+library(lubridate)
+library(xts)
+library(infer)
+library(parallel)
+library(parallelly)
+library(pracma)
+
+## Loading our own functions
+source(file.path("input", "ReseteraFunctions.R"), encoding = "utf-8")
+
+## Importing the dataset
+rst_thread_df <- read_csv(file.path("data", "rst_thread_df.csv"))
+
+## Setting the plot theme
+rst_palette <- c("#7847B5", "#8952CD", "#FEF9FE", "#9F75DB", "#8B70B4")
+
+theme_set(
+  theme(panel.background = element_rect(fill = rst_palette[3]),
+        panel.grid.major.x = element_line(colour = rst_palette[5]),
+        panel.grid.major.y = element_blank())
+)
+
+
+```
+
+The sample dataset, contained in the variable *rst_thread_df*, its composed of 
+`r nrow(rst_thread_df)` rows and `r ncol(rst_thread_df)` columns. The main purpose
+of this sample is to track different posts from the forums that come from a thread
+related to the EGS, which are contained in the variable *Post*. Because our study
+is focused around time, we also have date information, contained in the variable *Date*.
+Lastly, we also have *Thread_title* and *Page*, both of which aren't gonna be used
+for the analysis but are important for tracking potential outliers.
+
+```{r first_exploring}
+
+head(rst_thread_df)
+
+```
+
+
