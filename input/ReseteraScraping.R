@@ -118,4 +118,4 @@ stopCluster(clusterino)
 rst_thread_df_raw <- bind_rows(rst_thread_extracts)
 
 # Write the dataset into a csv file for future imports
-## write_csv(rst_thread_df, "rst_thread_df_raw")
+write_csv(rst_thread_df_raw, "data/rst_thread_df_raw.csv")
