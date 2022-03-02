@@ -22,7 +22,7 @@ library(pracma)
 source(file.path("input", "ReseteraFunctions.R"), encoding = "utf-8")
 
 ## Importing the dataset
-rst_thread_df <- read_csv(file.path("data", "rst_thread_df.csv"))
+rst_thread_df_raw <- read_csv(file.path("data", "rst_thread_df_raw.csv"))
 
 ## Setting the plot theme
 rst_palette <- c("#7847B5", "#8952CD", "#FEF9FE", "#9F75DB", "#8B70B4")
@@ -32,6 +32,77 @@ theme_set(
         panel.grid.major.x = element_line(colour = rst_palette[5]),
         panel.grid.major.y = element_blank())
 )
+
+# First exploration ====
+
+## We got info on thread posts, the date of posting (from year 'till minute), the page
+## and the title of the thread.
+head(rst_thread_df_raw)
+
+## A total of 32554 posts have been recorded. Dates range between 2018 until 2022.
+## The store's launch date was on December 6th in 2018.
+summary(rst_thread_df_raw)
+
+## Having another column that only register just years and months could be interesting
+rst_thread_df <- rst_thread_df_raw %>% 
+  mutate(Year = year(Date),
+         Month = month(Date),
+         # Also, Page column should be of integer type
+         Page = as.integer(Page)
+  )
+
+## In the Post column, some posts are completely empty (this is probably due to
+## advertising). We should filter them out
+rst_thread_df <- rst_thread_df %>% filter(!str_detect(Post, "^$"))
+
+## Because of the searching method that we've used, thread duplicates
+## could've been generated
+
+## A total of 703 rows are supposedly duplicated
+duplicated.data.frame(rst_thread_df)
+
+## Frequencies of threads and pages, in descending order
+rst_thread_df %>%
+  count(Thread_title, Page, Date, Post) %>%
+  arrange(desc(n)) %>% 
+  # Just show posts that have been repeated at least twice
+  filter(n > 1) %>% 
+  # Which threads are duplicated?
+  distinct(Thread_title)
+
+## We remove duplicated with selecting the first element of a combination of
+## four different factors
+
+rst_thread_df <- rst_thread_df %>%
+  group_by(Thread_title, Page, Date, Post) %>%
+  slice(1) %>% 
+  ungroup()
+
+## There's no duplicates anymore!
+duplicated.data.frame(rst_thread_df)
+
+
+## Also, some posts have strange words, that are related to the posting of
+## images. These phrases start with "{ \"lightbox_close\" and end with 
+## \"Toggle sidebar\" }
+
+## Create pattern to remove those strange words
+lightbox_pattern <- '\\{ \"lightbox_close\".+\"Toggle sidebar\" \\}'
+click_pattern <- 'Click to expand... Click to shrink...'
+
+rst_thread_df <- rst_thread_df %>%
+  mutate(Post = Post %>%
+           str_remove(lightbox_pattern) %>%
+           str_remove_all(click_pattern) %>% 
+           # Trim whitespaces from both sides and inside
+           str_squish) %>% 
+  ## This leads to new empty posts, so we remove them again
+  filter(!str_detect(Post, "^$"))  
+
+# Some threads present NA pages: This is because they only have one page.
+## Substitute NA's with the number 1
+rst_thread_df[is.na(rst_thread_df$Page),]$Page <- 1
+
 
 
 ## Tidytext tokenization ====
