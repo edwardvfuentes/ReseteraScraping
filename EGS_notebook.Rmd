@@ -17,21 +17,22 @@ In this article we try to measure the public opinion towards the Epic Games Stor
 
 Epic Games is a well-known american video game company that was founded 31 years ago. While it achieved important milestones in the past such as the development of the Unreal Engine or some famous titles (_Unreal Tournament_, _Gears of War_, etc...), the company now recognized as the developers of Fortnite, arguably the most popular game in the world these years, having around [3 million online players](https://playercounter.com/fortnite/) at the time of the writing of this article. Riding on its success, Epic diversified its portfolio with the opening of a brand new digital game store on December 4th, 2018, called the _Epic Games Store_ (EGS, directly competing with other stores such as Steam, Origin or GOG. One of the features from the EGS that puts it apart from the competition is the fact that they gift one or more videogames each week. While it's indeed a very generous offer, a lot of gamers thought of this move as if they were "buying users", like an excuse for the lack of crucial services that in 2018 were deemed essential for any digital store in the industry, such as a shopping cart, cloud saving, more payment options, community options, better navigability... and many other features. Epic responded to this [showing a roadmap](https://trello.com/b/GXLc34hk/epic-games-store-roadmap) for currently in-development and future planned features. After four years of improvements and the expanding of their game catalogue, the question that we want to answer is: Has the public opinion on the EGS gone better or worse as of 2022?
 
-In order to answer the proposed question, we'll be using sentiment analysis with posts obtained through web scrapping from the Resetera forums, one of the most popular videogame forums on the internet. As a user myself, I know that the opinion about the EGS on the forum wasn't quite good around the launch period, to say the least, so I'm really interested if it's been shifted in this regard towards one way or the other.
+In order to answer the proposed question, we'll be using sentiment analysis with posts obtained through web scrapping from the Resetera forums, one of the most popular videogame forums on the internet. As a user myself, I know that the opinion about the EGS on the forum wasn't quite good around the launch period, to say the least, so I'm really interested if it's been shifted in this regard towards one way or the other. The sentiment analysis will be employed using the sentiment lexicon from (Nielsen, 2011), which scores different words numerically from -5 (most negative) to 5 (most positive). Gauging the general opinion from any thread would consist of summing all the scores from the identified words and checking if the total sum is above or below zero, evaluating the general sentiment as positive or negative, respectively. Sentiment analysis using the AFINN lexicon is by no means to be exhaustive (that is, we are not making any judgement in basis of modelling or statistical inference), but can shed some light in the general perception of a specific theme.
 
 # Preparing the data
 
-As previously said, we'll be using a web scrapped dataset. The script for the scrapping is uploaded on my GitHub page, for anyone interested. Here we'll just import it as it is.
 
 ```{r importing, message=FALSE, warning=FALSE}
 ## Installing necessary packages
-install.packages(c("pracma", "polite", "tidytext", "wordcloud", "rebus"))
+install.packages(c("pracma", "polite", "tidytext",
+                   "wordcloud", "rebus", "textdata", "stopwords"))
 
 ## Importing packages
 library(tidyverse)
 library(tidytext)
 library(wordcloud)
 library(rvest)
+library(reshape2)
 library(polite)
 library(stringr)
 library(rebus)
@@ -45,8 +46,9 @@ library(pracma)
 ## Loading our own functions
 source(file.path("input", "ReseteraFunctions.R"), encoding = "utf-8")
 
-## Importing the dataset
-rst_thread_df <- read_csv(file.path("data", "rst_thread_df.csv"))
+## Importing the datasets
+rst_thread_df_raw <- read_csv(file.path("data", "rst_thread_df_raw.csv"))
+sentiments <- read_csv(file.path("data", "afinn.csv"))
 
 ## Setting the plot theme
 rst_palette <- c("#7847B5", "#8952CD", "#FEF9FE", "#9F75DB", "#8B70B4")
@@ -60,18 +62,552 @@ theme_set(
 
 ```
 
+# Web scrapping using rvest
+
+Our objective through the use of web scrapping is to have a data frame where we store different posts and other features related it. We are going to use the rvest package by Hadley Wickham, which is a useful package for this purpose and includes nice tidy syntax in its functions. This section of the article won't be evaluated because of duration reasons (importing all the pertinent info lasts around 24 minutes), but will be shown here regardless. The actual dataset has been saved already and will be imported like usual through a readr package function.
+
+First of all, we'll identify all Resetera threads that are about the Epic Games Store. The method for this will be using the google search engine with the following query: _resetera epic games store site:www.resetera.com_
+
+```{r web_scraping_1, eval = FALSE}
+## Connecting to Google ====
+
+# We intend to extract resetera urls through Google, at least for 10 different
+# search pages
+
+## Base url
+ggle_rst_base <- "https://www.google.com/search?q=resetera+epic+games+store+site:www.resetera.com&"
+```
+
+Because google usually returns not one, but multiple pages with possible results, we decide to make a list of different versions of the main url contained in the variable _ggle_rst_base_ to check for every possible page:
+
+```{r web_scraping_2, eval = FALSE}
+## Then, we create a list for 10 search pages adding a pattern to ggle_rst_base
+ggle_rst_urls <- paste0(ggle_rst_base, "start=", seq(0, 90, by = 10), "&")
+
+# Let's save google xmls in a list
+ggle_cookies_list <- map(ggle_rst_urls, read_html)
+```
+
+Because it's the "first" time we enter to Google, a web cookie question needs to be accepted in order to enter the actual search results. We plan for this using the _html_form_submit()_ function, which by default chooses an "Accept" button. Then, we read the htmls of the google pages:
+
+```{r web_scraping_3, eval = FALSE}
+# We need to get past cookies
+ggle_xml_list <- ggle_cookies_list %>% 
+  map(html_form) %>% 
+  map(1) %>% 
+  map(html_form_submit) %>% 
+  map(read_html)
+```
+
+After getting past cookies, we read the url's from the actual threads of the Resetera forums. Some user defined functions are used here, like _extract_google_url()_ or _ultima_pag()_: The former is used to clean unwanted characters from google urls on the HTML page, while the latter is intended to avoid using while loops during the post extraction in the forum threads, by identifying the last page from every thread.
+
+```{r web_scraping_4, eval = FALSE}
+# Retrieve text that includes URLs, then extract those URLs
+# with a specific function
+rst_thread_urls <- ggle_xml_list %>%
+  map(function(x) 
+  {
+    html_elements(x, "a") %>%
+      as.character() %>%
+      # Extract only urls
+      extract_google_url() %>% 
+      # Filter out URLs that are not related to Resetera
+      str_subset("^((?!google.com).)*$")
+  }
+  ) %>% 
+  # We unlist this for clarity
+  unlist()
+
+# Some thread urls found by Google results don't begin in the first page of that
+# thread. Therefore, we need to rewrite some of the urls
+rst_thread_urls <- rst_thread_urls %>%
+  str_remove("page-\\d+")
+
+# In order to construct adequate loops for reach thread, we need to 
+# know the last page for every thread
+rst_thread_last <- rst_thread_urls %>% 
+  map(bow) %>% 
+  map(scrape) %>% 
+  map(ultima_pag) %>% 
+  map(as.numeric)
+
+# If there's only one page, fill those spaces with a number one
+rst_thread_last[map_lgl(rst_thread_last, function(x) length(x) == 0)] <- 1
+```
+
+As we did before, we now create versions of the URL from every imported Resetera thread but for every page inside those same threads. We use a for loop here in the form of the _map2()_ function:
+
+```{r web_scraping_5, eval = FALSE}
+# We'll create a list with every page for every thread
+rst_thread_urls_full <- rst_thread_urls %>%
+  map2(rst_thread_last, function(x, y) paste0(x, "page-", 1:y)) %>% 
+  unlist()
+```
+
+Extracting text messages will be a computationally expensive task, so we are using parallel processing for it. We use the _parallel_ package for this. Also, we include the _polite_ package, which makes the web scraping process more clean by telling the web host who we are:
+
+```{r web_scraping_6, eval = FALSE}
+# Create cluster with 3 CPU nodes
+clusterino <- makeClusterPSOCK(3)
+
+# We export the user defined functions an libraries to the cluster
+clusterExport(clusterino, c('extract_rst_text', 'rm_quotes', 'ultima_pag', 'extract_google_url'))
+
+clusterEvalQ(clusterino, library(tidyverse))
+clusterEvalQ(clusterino, library(tidytext))
+clusterEvalQ(clusterino, library(rvest))
+clusterEvalQ(clusterino, library(lubridate))
+clusterEvalQ(clusterino, library(polite))
+
+
+# Begin the extraction of every post from every identified thread
+tic()
+
+rst_thread_extracts <- parLapplyLB(clusterino, rst_thread_urls_full, fun = function(x)
+  
+  {
+    extract_rst_text(scrape(bow(x))) 
+  }
+
+)
+
+elapsed_cluster_time <- toc()
+
+# Disconnect the cluster
+stopCluster(clusterino)
+```
+
+Having every post imported inside a list, we proceed to combine it into a data frame, and then write the object into a csv format for future work:
+```{r web_scraping_7, eval = FALSE}
+# Merge all the elements from the list into one dataframe
+rst_thread_df_raw <- bind_rows(rst_thread_extracts)
+
+# Write the dataset into a csv file for future imports
+write_csv(rst_thread_df_raw, "data/rst_thread_df_raw.csv")
+```
+
+
+
+## Exploring and cleaning
+
 The sample dataset, contained in the variable *rst_thread_df*, its composed of 
-`r nrow(rst_thread_df)` rows and `r ncol(rst_thread_df)` columns. The main purpose
+`r nrow(rst_thread_df_raw)` rows and `r ncol(rst_thread_df_raw)` columns. The main purpose
 of this sample is to track different posts from the forums that come from a thread
 related to the EGS, which are contained in the variable *Post*. Because our study
-is focused around time, we also have date information, contained in the variable *Date*.
+is focused around time, we also have date information, contained in the variable *Date*,
+which ranges between `r min(rst_thread_df_raw$Date) %>% as.Date()` (the store's launch date) and `r max(rst_thread_df_raw$Date) %>% as.Date()`` .
 Lastly, we also have *Thread_title* and *Page*, both of which aren't gonna be used
-for the analysis but are important for tracking potential outliers.
+for the analysis but are important for tracking potential outliers (unwanted characters,
+dots, etc...).
 
 ```{r first_exploring}
+head(rst_thread_df_raw)
+
+summary(rst_thread_df_raw)
+
+```
+
+Main issues we have to deal about using cleaning are:
+
+- Some posts are empty, with no text (they appear with just "").
+- There are a number of posts that have HTML code and should be extracted.
+- Page column is not in an integer format, but in character. Moreover, some posts show a missing value (NA) in this column. This is due to threads that consist of a single page.
+- Extracting months and years from the Date variable can be a good idea in order to have smoother visualizations.
+- Some posts appear duplicated, hence we have to remove them.
+
+We first deal with the creation of *Year* and *Month*, and converting *Page* into an integer variable. Note that we tanslate the changes into a new variable called *rst_thread_df*:
+```{r yearmonthpage}
+rst_thread_df <- rst_thread_df_raw %>% 
+  mutate(Year = year(Date),
+         Month = month(Date),
+         Page = as.integer(Page)
+         )
+```
+
+Missing posts probably appear because of promotional posts that only include advertising an no texts. We'll filter them out:
+```{r remove_empty_posts}
+rst_thread_df <- rst_thread_df %>%
+  filter(!str_detect(Post, "^$"))
+```
+
+Duplicated rows can be a problem because the total score calculation could be biased. There are a total of `r sum(duplicated.data.frame(rst_thread_df))` duplicated rows. We remove them with the following code, using a regular expression:
+
+```{r remove_duplicated}
+
+## The total of duplicated rows
+sum(duplicated.data.frame(rst_thread_df))
+
+## Frequencies of threads and pages, in descending order
+rst_thread_df %>%
+  count(Thread_title, Page, Date, Post) %>%
+  arrange(desc(n)) %>% 
+  # Just show posts that have been repeated at least twice
+  filter(n > 1) %>% 
+  # Which threads are duplicated?
+  distinct(Thread_title)
+
+## We remove duplicated rows by selecting the first element of a combination of
+## four different factors
+rst_thread_df <- rst_thread_df %>%
+  group_by(Thread_title, Page, Date, Post) %>%
+  slice(1) %>% 
+  ungroup()
+
+## There's no duplicates anymore!
+sum(duplicated.data.frame(rst_thread_df))
+
+```
+
+When someone embeds an image inside a post on Resetera, an HTML code is used for creating a box around the quote. This translates into our sample with a few posts having words like "lightbox" or "Click to expand". We'll be using a pattern to remove all of this code from the dataframe:
+
+```{r remove_lightbox}
+
+# Example of a few posts with the lightbox pattern
+rst_thread_df %>%
+  filter(str_detect(Post, "Loop Hero is still free on Epic Games")) %>%
+  slice(1) %>%
+  pull(Post)
+
+## Create pattern to remove those HTML words
+lightbox_pattern <- '\\{ \"lightbox_close\".+\"Toggle sidebar\" \\}'
+click_pattern <- 'Click to expand... Click to shrink...'
+
+rst_thread_df <- rst_thread_df %>%
+  mutate(Post = Post %>%
+           str_remove(lightbox_pattern) %>%
+           str_remove_all(click_pattern) %>% 
+           # Trim whitespaces from both sides and inside
+           str_squish()) %>% 
+  ## This leads to new empty posts, so we remove them again
+  filter(!str_detect(Post, "^$"))  
+
+## The same post as the example but without the pattern
+rst_thread_df %>%
+  filter(str_detect(Post, "Loop Hero is still free on Epic Games")) %>%
+  slice(1) %>%
+  pull(Post)
+
+
+```
+Threads showing NA in the Page column are single-paged threads. We'll substitute 
+that with a number one using a single line of code:
+```{r add_one_to_page}
+rst_thread_df[is.na(rst_thread_df$Page),]$Page <- 1
+```
+
+
+The cleaned version of the dataset looks like the following:
+```{r clean_explore}
 
 head(rst_thread_df)
 
 ```
 
+Now we are ready to use the sentiment lexicon for the analysis.
 
+## Tokenization with tidytext
+
+Using the _tidytext_ package we can score different posts according to a sentiment lexicon. First of all, we need to _tokenize_ posts, so we can separate words from a post into its proper column. From that point onwards, we'll be able to score words according to sentiments. A relevant issue is the fact that certain words can mean an entirely different thing besides some specific words (for example, "good" is a nice sentiment, but "not good" isn't). In order to adress this, we have to change the score of some words with a list of negative words
+
+```{r tokenize_dataframe}
+# Tokenize words into pairs
+rst_tkn_word_df <- rst_thread_df %>%
+  unnest_ngrams(Word, Post, n_min = 2L, n = 2L, drop = FALSE)
+head(rst_tkn_word_df)
+
+# Separate Word column into Word_1 and Word_2
+rst_tkn_word_df <- rst_tkn_word_df %>%
+  separate(Word, into = c("pre_Word", "Word"), sep = " ")
+
+
+```
+We then include the AFINN sentiment lexicon into the workspace. There's an important word that the lexicon lacks, which is "don't like", so we'll include it. Moreover, "exclusivity" is registered by AFINN as a positive word, but among gamers it's normally a negative one (because you can't play one videogame in more than one platform), so we'll change this score to negative. Then, we'll add the word scoring to the tokenized data frame through an inner join, and create a new factor variable that categorizes a word as "negative" or "positive", depending on its score. Using an idea from ((Zhang, 2018))[https://books.psychstat.org/textmining/sentiment-analysis.html], we'll update word scores according to previous negative words, so it better reflects context in the analysis:
+
+```{r get_sentiments}
+
+sentiments_df <- sentiments %>%
+  # Add "don't like" to the lexicon
+  bind_rows(data.frame(word = "don't like", value = -2)) %>%
+  # Change "exclusive" score to a negative one
+  mutate(value = case_when(word == "exclusive" ~ -2,
+                           TRUE ~ value)) %>%
+  # Capitalize variable names
+  rename_all(str_to_title)
+
+# Create a vector of negative conjunctions
+ngt_words <- c("no", "not", "never", "dont", "don't", "cannot", "can't", "won't", 
+    "wouldn't", "shouldn't", "aren't", "isn't", "wasn't", "weren't", "haven't",
+    "hasn't", "hadn't", "doesn't", "didn't", "mightn't", "mustn't")
+
+# With the AFINN sentiment lexicon, we can classify words by its sentiments
+rst_tkn_word_afinn <- rst_tkn_word_df %>%
+  # This join will enable a new column, Value, that scores words from Word_2
+  inner_join(sentiments_df, by = c("Word" = "Word")) %>% 
+  # We update values from Value according to negative words in Word_1
+  mutate(Value = ifelse(pre_Word %in% ngt_words, -Value, Value)) %>%
+  # A general classifier for positives and negatives could be useful
+  mutate(Sentiment = ifelse(Value > 0, "positive", "negative"))
+
+# Now some words, like "like", are scored negatively if precedeed by a negative
+# word
+rst_tkn_word_afinn %>% filter(Word == "like")
+
+```
+
+
+# Exploratory Data Analysis
+
+We first began looking at the distribution of the words scored by the sentiment lexicon. Having discrete values, an histogram wouldn't be useful for this situation, so we choose using a bar diagram. We can see that the distribution is bimodal: The two most common values are -2 and 2, being the most positive ones more frequent than the negative. Because of the bimodal nature, using measures like the average won't be that representative
+
+```{r score_distribution}
+
+rst_tkn_word_afinn %>%
+  ggplot(aes(x = Value)) +
+  geom_bar() +
+  theme_minimal() +
+  labs(title = "Sentiment score distribution from Resetera posts about the EGS",
+       x = "Score",
+       y = "Frequency") +
+  scale_y_continuous(labels = c("0", "10k", "20k"),
+                     breaks = c(0, 10000, 20000)) +
+  scale_x_continuous(breaks = -5:5)
+
+```
+
+
+
+## Global analysis
+
+Now that we have our sentiment classification ready, we'll proceed with a visual summary of the scores obtained through the
+sentiment analysis. Keep in mind that we'll start with a general exploration, and then break it up by time periods.  
+
+```{r common_words_general}
+# Most common words overall
+rst_tkn_word_df %>% 
+  count(Word) %>% 
+  arrange(desc(n))
+
+# A wordcloud for most common words
+rst_tkn_word_df %>% 
+  count(Word) %>% 
+  with(wordcloud(Word, n, max.words = 50))
+```
+
+Most common words are articles, which isn't interesting. In order to filter for
+more interesting words, we can filter out these types of words using a stopwords
+lexicon, like as follows:
+
+```{r}
+# We retrieve articles and conjunctions
+rst_tkn_word_nostop <- rst_tkn_word_df %>%
+  anti_join(get_stopwords(), by = c("Word" = "word"))
+
+rst_tkn_word_nostop %>% 
+  count(Word) %>% 
+  arrange(desc(n))
+
+rst_tkn_word_nostop %>% 
+  count(Word) %>% 
+  with(wordcloud(Word, n, max.words = 50))
+
+```
+
+
+Not surprisingly, Games is the most mentioned name, followed by Steam, being this one a direct
+competitor to the Epic Games Store. Other interesting words are "exclusivity",
+which may refer to exclusive games that are included in the EGS (mainly games from
+Ubisoft and some indie companies).
+
+
+How's the distribution of positive and negative words separately?
+```{r common_words_afinn}
+# Total percentage of positive and negative words
+(summary_pst_ngt <- rst_tkn_word_afinn %>%
+  group_by(Sentiment) %>%
+  summarize(Count = n(),
+            Proportion = scales::percent(Count / nrow(.), 0.01)) %>%
+  arrange(desc(Proportion))
+)
+
+# Most common positive words
+rst_tkn_word_afinn %>%
+  filter(Value > 0) %>% 
+  count(Word) %>% 
+  arrange(desc(n))
+
+# Most common negative words
+rst_tkn_word_afinn %>%
+  filter(Value < 0) %>% 
+  count(Word) %>% 
+  arrange(desc(n))
+
+# Frequency bars for positive and negative sentiments
+rst_tkn_word_afinn %>% 
+  count(Sentiment, Word) %>% 
+  group_by(Sentiment) %>% 
+  top_n(10, n) %>% 
+  arrange(desc(n), .by_group = TRUE) %>%
+  ggplot(aes(x = fct_reorder(Word, n), y = n)) +
+  geom_bar(stat = "identity", fill = rst_palette[4]) +
+  labs(y = "Frequency",
+       x = "Sentiment",
+       title = "Frequency of negative and positive sentiments") +
+  facet_wrap(~ Sentiment, scale = "free_y") +
+  coord_flip()
+
+# Wordcloud of positive and negative
+rst_tkn_word_afinn %>%
+  count(Word, Sentiment, sort = TRUE) %>%
+  acast(Word ~ Sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("#F8766D", "#00BFC4"),
+                   max.words = 100)
+```
+
+On the positive words, like is the most common one, but this has to be treated with caution because "like" is also used as a preposition, while in the third place we have "free", which probably has something to do with the store's policy of giving away free games each week. On the negative words, "exclusive" is in the second place, which is why we had to make the direction of it's score before, and in 4th place we have "cut", which probably is not a negative word in this context because it probably refers to the 11% cut of sales that the store retrieves from game developers, which by industry standards is significantly low (against the 30% from the Steam store, for instance).
+
+Having sentiment scores for each word, we can have an aggregate score for each post, and then classifying them as positive or negative:
+```{r post_scoring}
+# Aggregate scores per post into a new variable
+rst_tkn_word_afinn <-rst_tkn_word_afinn %>%
+  group_by(Post) %>%
+  mutate(Post_Value = sum(Value))
+
+# Checking the distribution of the scored posts
+summary(rst_tkn_word_afinn$Post_Value)
+sd(rst_tkn_word_afinn$Post_Value)
+hist(rst_tkn_word_afinn$Post_Value)
+
+# Identifying the outlier post and saving it
+
+outlier_post <- (rst_tkn_word_afinn %>% filter(Post_Value == max(.$Post_Value)) %>% pull(Post))[1]
+
+```
+
+We can see the distribution of the scoring as having very long tails, with an outlier post having a score of 189. This last post, which is really long (about `r str_count(outlier_post, "\\w+")` words) is about an [extensive research](https://www.resetera.com/threads/the-epic-games-store-as-described-by-sergey-galyonkin-steamspy-creator-currently-at-epic-update-sergey-clarifying-points-on-twitter.93249/) made by one of the forum members about an Epic employee who had developed a webpage for tracking Steam info.
+
+```{r common_words_afinn}
+# Top 10 threads by sentiment
+## Positive
+rst_tkn_word_afinn %>%
+  group_by(Thread_title) %>%
+  summarise(Total_value = sum(Value)) %>%
+  arrange(desc(Total_value))
+
+## Negative
+rst_tkn_word_afinn %>%
+  group_by(Thread_title) %>%
+  summarise(Total_value = sum(Value)) %>%
+  arrange(Total_value)
+
+```
+
+
+
+According to the top 10 of positive and negative words, it seems there are more positive words than negative ones, having a total of `r summary_pst_ngt$Proportion[1]` positive words against `r summary_pst_ngt$Proportion[2]` of negatives. Because different words have different scores, frequency alone is not useful to give a faithful representation of sentiments: The mean score is `r mean(rst_tkn_word_afinn$Value)`, which is a bit higher than zero and may indicate a general positive opinion on the store.
+
+
+There is one problem summing scores by words: Their conveyed feeling might be taken out of context. For example, we can't detect sarcasm or irony through this method, or words like "like" doesn't necessarily mean something good. _Exclusivity_, which is listed as one of the top 10 positive words, is in fact considered something bad in the videogame context, because it means that a videogame can be only played in just one platform (PC, console, etc...). A way to deal with this would be having overall scores aggregated by post. For instance, if a post has a positive net, we could classify that post as positive, and viceversa. Let's try this method:
+
+```{r}
+
+# Top 10 negative posts
+rst_tkn_word_afinn %>%
+  group_by(Post) %>%
+  summarise(Total_post_score = sum(Value)) %>%
+  arrange(Total_post_score)
+
+# Classifying the feelings of the posts
+rst_tkn_word_afinn <- rst_tkn_word_afinn %>%
+  group_by(Post) %>%
+  mutate(Post_sentiment = ifelse(sum(Value) > 0, "positive", "negative")) %>%
+  ungroup()
+
+```
+
+
+## By periods of time
+
+How did the public opinion towards the store fare over the years?
+
+```{r}
+# Per month-year
+## Total sum of scores
+rst_tkn_word_afinn %>% 
+  group_by(Year, Month) %>% 
+  summarise(Total_word_sentiment = sum(Value)) %>% 
+  mutate(year_month = paste0(Year, "-", Month) %>% ym()) %>% 
+  ggplot(aes(x = year_month, y = Total_word_sentiment)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 0, linetype = 2) +
+  scale_x_date(date_breaks = "6 months") +
+  labs(title = "Total sentiment score of words by month and year",
+       x = "Date",
+       y = "Total Score") +
+  theme(axis.text.x = element_text(angle = 0))
+
+## Total sum of negative words
+rst_tkn_word_afinn %>% 
+  filter(Value < 0) %>%
+  group_by(Year, Month) %>% 
+  summarise(Total_word_sentiment = sum(Value)) %>% 
+  mutate(year_month = paste0(Year, "-", Month) %>% ym()) %>% 
+  ggplot(aes(x = year_month, y = Total_word_sentiment)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 0, linetype = 2) +
+  scale_x_date(date_breaks = "6 months") +
+  labs(title = "Total negative sentiment score of words by month and year",
+       y = "Total negative score",
+       x = "Date") +
+  theme(axis.text.x = element_text(angle = 0))
+```
+
+In the Total negative words plot, we can see that most of the negative words were from the first months of the store lifetime. The sharpest descent comes from October 2019. Which threads are included in this specific point in time?
+
+
+```{r}
+
+rst_tkn_word_afinn %>%
+  filter(as.Date(Date) == "2019-08-01") %>%
+  distinct(Thread_title)
+
+```
+
+The identified thread is about the launch of an exclusive indie title for the EGS called Ooblets. Although any exclusivity announced for the store wasn't met with much appraisal, the Ooblets case was controversial because the developer defended somewhat informally the decision of accepting the offer Epic made to them. This didn't bode well between the Resetera members, hence, the significant increase in negativity. [It really got worse than a few simple comments, though](https://www.pcgamer.com/ooblets-devs-reveal-threats-of-violence-and-racist-abuse-following-epic-store-announcement/#:~:text=Ooblets%20devs%20reveal%20threats%20of%20violence%20and%20racist%20abuse%20following%20Epic%20Store%20announcement,-By%20Andy%20Chalk&text=Despite%20the%20appalling%20backlash%2C%20the,Store%20was%20the%20right%20call.).
+
+```{r}
+## Calculate proportions by post
+rst_post_proportion <- rst_tkn_word_afinn %>%
+  group_by(Year, Month) %>%
+  count(Post_sentiment) %>%
+  mutate(Proportion = n / sum(n)) %>%
+  ungroup() %>%
+  mutate(year_month = paste0(Year, "-", Month) %>% ym())
+
+# Visualize in a time series
+rst_post_proportion %>%
+  filter(Post_sentiment == "positive") %>%
+  ggplot(aes(x = year_month, y = Proportion - 0.5)) +
+  geom_bar(stat = "identity") +
+  # Plot the mean
+  geom_hline(yintercept = 0, linetype = 2) +
+  labs(y = "Positive ratio (%)",
+       x = "Date",
+       title = "Proportion of positive posts of EGS threads on Resetera") +
+  coord_cartesian(ylim = c(-0.5, 0.5)) +
+  scale_x_date(date_breaks = "6 months") +
+  theme(panel.grid.minor.y = element_line())
+
+```
+
+In general, it seems the opinion of the store has stayed somewhat positive over the years, having only a few moments where most posts where negative: This was on November in both 2020 and 2021. Which threads are included here?
+
+```{r}
+# Threads from November of 2020 and 2021
+
+rst_tkn_word_afinn %>%
+  filter(Month == 11, Year %in% c(2020, 2021)) %>%
+  distinct(Thread_title)
+
+```
+
+On one of the threads, _"Riot Games coming to Epic Store"_ users we're not that much impressed because both Epic Games and Riot Games are both owned in part from Tencent, another powerful video game company, while _"Black Friday Sale"_ has a few number of posts and they don't express significant satisfaction.

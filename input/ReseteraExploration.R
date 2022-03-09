@@ -21,8 +21,9 @@ library(pracma)
 ## Loading our own functions
 source(file.path("input", "ReseteraFunctions.R"), encoding = "utf-8")
 
-## Importing the dataset
+## Importing the datasets
 rst_thread_df_raw <- read_csv(file.path("data", "rst_thread_df_raw.csv"))
+sentiments <- read_csv(file.path("data", "afinn.csv"))
 
 ## Setting the plot theme
 rst_palette <- c("#7847B5", "#8952CD", "#FEF9FE", "#9F75DB", "#8B70B4")
@@ -95,7 +96,7 @@ rst_thread_df <- rst_thread_df %>%
            str_remove(lightbox_pattern) %>%
            str_remove_all(click_pattern) %>% 
            # Trim whitespaces from both sides and inside
-           str_squish) %>% 
+           str_squish()) %>% 
   ## This leads to new empty posts, so we remove them again
   filter(!str_detect(Post, "^$"))  
 
@@ -125,10 +126,6 @@ rst_tkn_word_df <- rst_tkn_word_df %>%
 
 
 
-post_ejemplo <- rst_tkn_word_df %>% filter(str_detect(Post, "don't like")) %>% slice(1) %>% select(Post)
-
-
-
 # Load the sentiments data frame
 # sentiments_df lacks important works like "don't like"
 sentiments_df <- get_sentiments("afinn") %>%
@@ -152,7 +149,7 @@ rst_tkn_word_df %>%
 # A wordcloud for most common words
 rst_tkn_word_df %>% 
   count(Word) %>% 
-  with(wordcloud(Word, n, max.words = 100))
+  with(wordcloud(Word, n, max.words = 50))
 
 # Most common positive words
 rst_tkn_word_afinn %>%
@@ -168,29 +165,29 @@ rst_tkn_word_afinn %>%
 
 # Wordcloud of positive and negative
 rst_tkn_word_afinn %>%
-  count(Word, sentiment, sort = TRUE) %>%
-  acast(Word ~ sentiment, value.var = "n", fill = 0) %>%
+  count(Word, Sentiment, sort = TRUE) %>%
+  acast(Word ~ Sentiment, value.var = "n", fill = 0) %>%
   comparison.cloud(colors = c("#F8766D", "#00BFC4"),
                    max.words = 100)
 
 # Frequency bars for positive and negative sentiments
 rst_tkn_word_afinn %>% 
-  count(sentiment, Word) %>% 
-  group_by(sentiment) %>% 
+  count(Sentiment, Word) %>% 
+  group_by(Sentiment) %>% 
   top_n(10) %>% 
   ggplot(aes(x = fct_reorder(Word, n), y = n)) +
   geom_bar(stat = "identity", fill = rst_palette[4]) +
-  facet_wrap(~ sentiment, scale = "free_y") +
+  facet_wrap(~ Sentiment, scale = "free_y") +
   coord_flip()
 
 # What's the mean sentiment of the entire dataset?
 rst_tkn_word_afinn %>% 
-  summarise(Mean_sentiment = mean(value))
+  summarise(Mean_sentiment = mean(Value))
 
 # Mean sentiment by groups of month and year
 rst_tkn_word_afinn %>% 
   group_by(Year, Month) %>% 
-  summarise(Mean_word_sentiment = mean(value)) %>% 
+  summarise(Mean_word_sentiment = mean(Value)) %>% 
   mutate(year_month = paste0(Year, "-", Month) %>% ym()) %>% 
   ggplot(aes(x = year_month, y = Mean_word_sentiment)) +
   geom_line() +
@@ -204,7 +201,7 @@ rst_tkn_word_afinn %>%
 ## Top 10 most positive threads by words
 rst_tkn_word_afinn %>% 
   group_by(Thread_title) %>% 
-  summarise(Mean_sentiment = mean(value)) %>% 
+  summarise(Mean_sentiment = mean(Value)) %>% 
   arrange(desc(Mean_sentiment))
 
 
